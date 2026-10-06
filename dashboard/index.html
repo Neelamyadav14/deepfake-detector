@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Deepfake Detector</title>
+<style>
+  body { font-family: 'Inter', sans-serif; background: #F4F1EA; margin: 0; padding: 40px; color: #1C1C1C; }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 24px; margin-bottom: 4px; }
+  p.sub { color: #666; margin-top: 0; margin-bottom: 24px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab {
+    padding: 10px 18px; border-radius: 6px; cursor: pointer;
+    background: #E8E4D8; font-size: 14px; font-weight: 600;
+  }
+  .tab.active { background: #1C1C1C; color: white; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .card { background: white; border-radius: 10px; padding: 24px; margin-bottom: 20px; }
+  input[type=file] { margin-bottom: 16px; }
+  button {
+    font-family: inherit; font-size: 14px; padding: 10px 20px;
+    border-radius: 6px; border: none; background: #1C1C1C; color: white; cursor: pointer;
+  }
+  button:disabled { background: #ccc; cursor: not-allowed; }
+  .result { margin-top: 20px; padding: 16px; border-radius: 8px; font-size: 15px; }
+  .result.real { background: #E1F0E5; color: #1E5631; }
+  .result.fake { background: #F8DCDC; color: #8B2E2E; }
+  .result .verdict { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .status { font-size: 13px; color: #888; margin-top: 10px; }
+  #imgPreview { max-width: 100%; max-height: 260px; margin-top: 16px; border-radius: 8px; display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Deepfake Detector</h1>
+  <p class="sub">Test either stage of the model: single-image classification (Stage 1) or full video with temporal analysis (Stage 2).</p>
+
+  <div class="tabs">
+    <div class="tab active" id="tabVideo" onclick="switchTab('video')">Video (Stage 2: CNN+LSTM)</div>
+    <div class="tab" id="tabImage" onclick="switchTab('image')">Image (Stage 1: CNN only)</div>
+  </div>
+
+  <div class="panel active" id="panelVideo">
+    <div class="card">
+      <input type="file" id="videoInput" accept="video/*">
+      <br>
+      <button id="videoBtn" onclick="analyzeVideo()">Analyze Video</button>
+      <p class="status" id="videoStatus"></p>
+      <div id="videoResult"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="panelImage">
+    <div class="card">
+      <input type="file" id="imageInput" accept="image/*" onchange="previewImage()">
+      <br>
+      <img id="imgPreview">
+      <br>
+      <button id="imageBtn" onclick="analyzeImage()" style="margin-top:16px;">Analyze Image</button>
+      <p class="status" id="imageStatus"></p>
+      <div id="imageResult"></div>
+    </div>
+  </div>
+
+  <p style="font-size:12px;color:#999;">
+    Assumes the API is running locally at http://localhost:8000<br>
+    Try files from your own <code>data/raw_videos</code> (video tab) or
+    <code>data/frames</code> (image tab) folders to test against known examples.
+  </p>
+</div>
+
+<script>
+const API_BASE = "http://localhost:8000";
+
+function switchTab(which) {
+  document.getElementById('tabVideo').classList.toggle('active', which === 'video');
+  document.getElementById('tabImage').classList.toggle('active', which === 'image');
+  document.getElementById('panelVideo').classList.toggle('active', which === 'video');
+  document.getElementById('panelImage').classList.toggle('active', which === 'image');
+}
+
+function renderResult(data, targetId) {
+  const box = document.getElementById(targetId);
+  const cls = data.prediction === "fake" ? "fake" : "real";
+  box.innerHTML = `
+    <div class="result ${cls}">
+      <div class="verdict">${data.prediction.toUpperCase()}</div>
+      <div>Confidence: ${(data.confidence * 100).toFixed(1)}%</div>
+    </div>
+  `;
+}
+
+async function analyzeVideo() {
+  const input = document.getElementById('videoInput');
+  const status = document.getElementById('videoStatus');
+  const resultBox = document.getElementById('videoResult');
+  const btn = document.getElementById('videoBtn');
+
+  if (!input.files.length) { status.textContent = "Please choose a video file first."; return; }
+
+  btn.disabled = true;
+  status.textContent = "Analyzing... extracting frames and running CNN+LSTM.";
+  resultBox.innerHTML = "";
+
+  const formData = new FormData();
+  formData.append("file", input.files[0]);
+
+  try {
+    const res = await fetch(`${API_BASE}/predict`, { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.error) {
+      status.textContent = data.error;
+    } else {
+      status.textContent = `Analyzed ${data.num_frames_analyzed} frames using ${data.model_used}.`;
+      renderResult(data, 'videoResult');
+    }
+  } catch (e) {
+    status.textContent = "Error contacting the API — is it running? (uvicorn src.api.main:app --reload)";
+  }
+  btn.disabled = false;
+}
+
+function previewImage() {
+  const input = document.getElementById('imageInput');
+  const preview = document.getElementById('imgPreview');
+  if (input.files && input.files[0]) {
+    preview.src = URL.createObjectURL(input.files[0]);
+    preview.style.display = 'block';
+  }
+}
+
+async function analyzeImage() {
+  const input = document.getElementById('imageInput');
+  const status = document.getElementById('imageStatus');
+  const resultBox = document.getElementById('imageResult');
+  const btn = document.getElementById('imageBtn');
+
+  if (!input.files.length) { status.textContent = "Please choose an image file first."; return; }
+
+  btn.disabled = true;
+  status.textContent = "Analyzing...";
+  resultBox.innerHTML = "";
+
+  const formData = new FormData();
+  formData.append("file", input.files[0]);
+
+  try {
+    const res = await fetch(`${API_BASE}/predict_image`, { method: "POST", body: formData });
+    const data = await res.json();
+    if (data.error) {
+      status.textContent = data.error;
+    } else {
+      status.textContent = data.face_detected ? "Face detected and analyzed." : "No face detected — analyzed full image.";
+      renderResult(data, 'imageResult');
+    }
+  } catch (e) {
+    status.textContent = "Error contacting the API — is it running?";
+  }
+  btn.disabled = false;
+}
+</script>
+</body>
+</html>
